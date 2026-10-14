@@ -1,0 +1,181 @@
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+== Section 2 ==
+width=5796 height=3870 min=2029.0 max=16383.0 bits=14.00
+
+== Section 4: Bayer pattern from the CR2 bytes ==
+--- Section 4.2.2: Bayer phase from the CR2 bytes ---
+Canon / Canon EOS 5D Mark III (ModelID 0x80000285), byte order little
+CFAPattern tag present: False
+Sensor: 5920 x 3950, 14-bit (SOF3: 3950 lines x 2960 samples x 2 components)
+Sensor tile at (0,0): RGGB
+Camera crop origin (left, top) = (140, 96) -> RGGB
+dcraw crop origin (left, top)  = (122, 80) -> RGGB
+dcraw -i -v campus.CR2:
+
+Filename: campus.CR2
+Timestamp: Sat Jan  1 08:01:40 2000
+Camera: Canon EOS 5D Mark III
+ISO speed: 100
+Shutter: 1/256.0 sec
+Aperture: f/5.7
+Focal length: 31.0 mm
+Embedded ICC profile: no
+Number of raw images: 1
+Thumb size:  5760 x 3840
+Full size:   5920 x 3950
+Image size:  5796 x 3870
+Output size: 5796 x 3870
+Raw colors: 3
+Filter pattern: RG/GB
+Daylight multipliers: 2.125175 0.943985 1.338680
+Camera multipliers: 1903.000000 1024.000000 1765.000000 1024.000000
+
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (camera) ---
+Applied WB scaling factors -> s_r: 1.8584, s_g: 1.0000, s_b: 1.7236
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (camera) ---
+Applied WB scaling factors -> s_r: 1.8584, s_g: 1.0000, s_b: 1.7236
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (camera) ---
+Applied WB scaling factors -> s_r: 1.8584, s_g: 1.0000, s_b: 1.7236
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (camera) ---
+Applied WB scaling factors -> s_r: 1.8584, s_g: 1.0000, s_b: 1.7236
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+
+== Section 5: white balance ==
+manual patch (2400, 2450, 2800, 2850): R=0.0353 G=0.0755 B=0.0501
+channel maxima (linear): R=0.9847 G=1.0000 B=0.9847
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (white_world) ---
+Applied WB scaling factors -> s_r: 1.0155, s_g: 1.0000, s_b: 1.0155
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (gray_world) ---
+Applied WB scaling factors -> s_r: 1.7070, s_g: 1.0000, s_b: 1.6979
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (camera) ---
+Applied WB scaling factors -> s_r: 1.8584, s_g: 1.0000, s_b: 1.7236
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+--- Section 2: Raw Image Extraction ---
+Image Width: 5796, Image Height: 3870
+Min raw value: 2029.0, Max raw value: 16383.0
+Approximate bits per pixel: 14.00 (container: uint16)
+--- Section 3: Linearization ---
+Linearized image range: [0.0000, 1.0000]
+Mean linear intensity: 0.1059
+--- Section 5: White Balancing (manual) ---
+Applied WB scaling factors -> s_r: 2.1419, s_g: 1.0000, s_b: 1.5059
+--- Section 6: Demosaicing (Bilinear Interpolation) ---
+Demosaiced RGB image shape: (3870, 5796, 3)
+patch after manual WB: R=0.0755 G=0.0755 B=0.0755
+
+== Section 6: demosaicing ==
+red: measured sites 25%
+red: crop (2464, 2496, 3368, 3400), unmeasured pixels before=768, zero-valued pixels after=0
+green: measured sites 50%
+green: crop (2464, 2496, 3368, 3400), unmeasured pixels before=512, zero-valued pixels after=0
+blue: measured sites 25%
+blue: crop (2464, 2496, 3368, 3400), unmeasured pixels before=768, zero-valued pixels after=0
+
+== Section 7: colour space correction ==
+A = M_sRGB->Cam:
+[[0.26188661 0.1834723  0.02519269]
+ [0.09209129 0.7619589  0.20529817]
+ [0.01948729 0.18970602 0.53785287]]
+row sums of A: [0.4705516  1.05934836 0.74704619]  reciprocals: [2.12516545 0.94397654 1.33860532]
+inv(A) (no normalization):
+[[ 4.17465839 -1.05698101  0.20791074]
+ [-0.51250565  1.57998613 -0.57907445]
+ [ 0.02951106 -0.51898055  2.05595684]]
+row sums: [3.32558811 0.48840603 1.56648735]
+rows normalized, then inverted:
+[[ 1.96439218 -1.1197111   0.15531892]
+ [-0.24116035  1.67375571 -0.43259536]
+ [ 0.01388648 -0.5497812   1.53589472]]
+row sums: [1. 1. 1.]
+--- Section 7: Color Space Correction ---
+Computed Transformation Matrix M_{Cam->sRGB}:
+[[ 1.96439218 -1.1197111   0.15531892]
+ [-0.24116035  1.67375571 -0.43259536]
+ [ 0.01388648 -0.5497812   1.53589472]]
+
+== Section 8: brightness and gamma ==
+mean gray before scaling=0.1345 scale=1.8588
+--- Section 8: Brightness and Gamma Encoding ---
+Current mean gray level: 0.1345
+Brightness scaling factor: 1.8588 (target: 0.25)
+Final sRGB mean intensity: 0.3968
+
+== Section 9: compression ==
+--- Section 9: Compression (JPEG quality = 95) ---
+Saved: campus_output.png (27710.19 KB)
+Saved: campus_output.jpg (4311.16 KB)
+Compression Ratio (PNG / JPEG): 6.43x
+PNG: 27710.19 KB
+JPEG q=95: 4311.16 KB ratio=6.43 PSNR=39.54 dB SSIM=0.9891
+JPEG q=85: 2034.11 KB ratio=13.62 PSNR=38.37 dB SSIM=0.9826
+JPEG q=75: 1416.62 KB ratio=19.56 PSNR=37.78 dB SSIM=0.9774
+JPEG q=50: 897.99 KB ratio=30.86 PSNR=36.80 dB SSIM=0.9661
+JPEG q=25: 606.93 KB ratio=45.66 PSNR=35.19 dB SSIM=0.9458
+JPEG q=10: 433.01 KB ratio=63.99 PSNR=31.23 dB SSIM=0.8977

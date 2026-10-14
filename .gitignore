@@ -1,0 +1,28 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+myvenv/
+.venv/
+venv/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# dcraw tool (third-party; download from https://dechifro.org/dcraw/)
+dcraw
+dcraw.c
