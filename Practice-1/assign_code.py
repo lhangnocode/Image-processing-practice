@@ -192,7 +192,9 @@ class RawCameraPipeline:
                            TIFF; the tile moves by that offset modulo 2.
         """
         # 2-bit color index (0 = R, 1 = G, 2 = B) per tile position, used by dcraw
-        # for every Canon EOS camera ("filters = 0x94949494" in dcraw.c).
+        # for Canon EOS cameras such as the 5D Mark III, the value it assigns when the
+        # file states no layout ("filters = 0x94949494" in dcraw.c). Some other Canon
+        # models (older PowerShots, EOS D2000C) use different codes.
         CANON_FILTERS = 0x94949494
         # Border cut by dcraw for this sensor size: (width, height) -> (left, top)
         # (dcraw.c, table canon[]).

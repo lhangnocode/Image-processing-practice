@@ -89,7 +89,7 @@ In this assignment, I implement the complete \textbf{Digital Camera Pipeline} (I
     \item \textbf{Bayer Mosaic Masking \& Phase Identification}: Establishing color channel masks and determining the correct Bayer phase.
     \item \textbf{White Balancing}: Correcting illuminant color casts via four standard algorithms.
     \item \textbf{Demosaicing}: Reconstructing a dense three-channel RGB representation using 2D bilinear convolution kernels.
-    \item \textbf{Color Space Correction}: Transforming device-dependent Camera RGB coordinates to standard sRGB via CIE XYZ 1931 space.
+    \item \textbf{Color Space Correction}: Transforming device-dependent camera RGB coordinates to standard sRGB via CIE XYZ 1931 space.
     \item \textbf{Brightness Scaling \& Gamma Encoding}: Adjusting exposure to target perceptual middle gray and applying non-linear sRGB gamma encoding.
     \item \textbf{Image Compression}: Evaluating lossless PNG versus lossy JPEG compression across quality factors.
 \end{enumerate}
@@ -281,7 +281,7 @@ offset    tag   type  count        value/offset
 \end{lstlisting}
 The strings at \texttt{0xf4} and \texttt{0xfa} are ``Canon'' and ``Canon EOS 5D Mark III'', so the file comes from a Canon EOS camera.
 
-\paragraph{Step 3: looking for a CFA tag.} A file can record its CFA layout in tag \texttt{0x828E} (CFAPattern of TIFF/EP) or tag \texttt{0xA302} (CFAPattern of EXIF). Scanning every entry of IFD\#0 to IFD\#3 and of the EXIF sub-IFD (at \texttt{0x1be}, $38$ entries) finds neither tag: \textbf{a CR2 file does not record its CFA layout}. Decoders therefore rely on the known layout of Canon sensors: all Canon EOS cameras have an \texttt{RGGB} color filter array starting at sensor pixel $(0, 0)$, which \texttt{dcraw} encodes as \texttt{filters = 0x94949494}~\cite{lclevy_cr2, dcraw}. What the file does provide is the information needed to apply this code: the camera (Step 2), the full sensor size (Step 4), and from it the position of the image on the sensor (Step 6).
+\paragraph{Step 3: looking for a CFA tag.} A file can record its CFA layout in tag \texttt{0x828E} (CFAPattern of TIFF/EP) or tag \texttt{0xA302} (CFAPattern of EXIF). Scanning every entry of IFD\#0 to IFD\#3 and of the EXIF sub-IFD (at \texttt{0x1be}, $38$ entries) finds neither tag: \textbf{a CR2 file does not record its CFA layout}. Decoders therefore choose the layout from the camera model. For Canon EOS cameras such as the 5D Mark III, \texttt{dcraw} uses \texttt{filters = 0x94949494}, which describes an \texttt{RGGB} tile starting at sensor pixel $(0, 0)$~\cite{lclevy_cr2, dcraw}; it is the value \texttt{dcraw} assigns when the file states no layout (\texttt{if (filters == UINT\_MAX) filters = 0x94949494;}). A few other Canon models, mainly older PowerShot cameras and the EOS D2000C, are given different values in \texttt{dcraw}, which is why the camera model read in Step 2 is needed. What the file does provide is the information needed to apply this code: the camera (Step 2), the full sensor size (Step 4), and from it the position of the image on the sensor (Step 6).
 
 \paragraph{Step 4: RAW IFD and sensor size.} IFD\#3 at \texttt{0x11980} has $7$ entries; among them, Compression (\texttt{0x0103}) $= 6$ (JPEG), StripOffsets (\texttt{0x0111}) $=$ \texttt{0x411ad8}, where the RAW data starts, and the Canon slice tag \texttt{0xC640} $= (1, 2960, 2960)$. The RAW data is a lossless JPEG stream (ITU-T T.81~\cite{itu_t81}) whose markers are always \emph{big-endian}:
 \begin{lstlisting}[language={}, numbers=none]
@@ -294,7 +294,7 @@ The SOF3 header reads: length \texttt{00 0e} $= 14$, precision \texttt{0e} $= 14
 \begin{equation}
     \text{color}(r, c) = \big(\texttt{filters} \gg \big((((r \ll 1) \,\&\, 14) + (c \,\&\, 1)) \ll 1\big)\big) \,\&\, 3
 \end{equation}
-For the $2 \times 2$ tile at the sensor origin only the lowest byte, $\texttt{0x94} = \texttt{10\,01\,01\,00}_2$, is used (Table~\ref{tab:filters}): the tile at sensor pixel $(0, 0)$ is \texttt{RGGB}.
+Each byte of \texttt{filters} covers two rows of two pixels. The four bytes are identical, so the pattern repeats every 2 rows and the lowest byte, $\texttt{0x94} = \texttt{10\,01\,01\,00}_2$, describes the whole tile (Table~\ref{tab:filters}): the tile at sensor pixel $(0, 0)$ is \texttt{RGGB}.
 
 \begin{table}[H]
 \centering
@@ -318,9 +318,9 @@ $(1, 1)$ & $6$ & \texttt{10} & B \\
 \end{equation}
 The difference in size gives only the total border, $124$ columns and $80$ rows, not how it is split between the two sides, yet the split decides the pattern: a left border of $122$ columns keeps \texttt{RGGB}, while $123$ would give \texttt{GRBG}. The split is taken from the table of Canon sensors in \texttt{dcraw}~\cite{dcraw}, which for a $5920 \times 3950$ sensor cuts $122$ columns on the left and $80$ rows at the top ($5920 - 122 - 2 = 5796$ and $3950 - 80 = 3870$). Both offsets are even, so the tile is unchanged (Figure~\ref{fig:crop_parity}) and the Bayer pattern of \texttt{campus.tiff} is \textbf{\texttt{RGGB}}.
 
-\begin{figure}[!htb]
+\begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\textwidth]{figures/bayer_crop_parity.png}
+    \includegraphics[width=0.72\textwidth]{figures/bayer_crop_parity.png}
     \caption{The color filter array of the sensor (from \texttt{filters = 0x94949494}) around the corner where the image starts. Faded pixels are cut away; the red square is the first $2 \times 2$ tile of the image. (a) The crop used by \texttt{dcraw} for \texttt{campus.tiff}. (b) A crop starting one column further right would change the pattern to \texttt{GRBG}.}
     \label{fig:crop_parity}
 \end{figure}
@@ -393,7 +393,7 @@ White balancing discounts the color of the ambient illuminant~\cite{ebner2007col
     \begin{equation}
         s_r = \frac{\text{mean}(G)}{\text{mean}(R)}, \quad s_b = \frac{\text{mean}(G)}{\text{mean}(B)}
     \end{equation}
-    \item \textbf{Camera Presets:} Uses the multipliers recorded by the camera and reported by dcraw:
+    \item \textbf{Camera Presets:} Uses the multipliers recorded by the camera and reported by \texttt{dcraw}:
     \begin{equation}
         s_r = \frac{m_1}{m_2} = \frac{1.858398}{1.0} \approx 1.8584, \quad s_b = \frac{m_3}{m_2} = \frac{1.723633}{1.0} \approx 1.7236
     \end{equation}
@@ -460,7 +460,7 @@ Table~\ref{tab:wb_scalars} lists the gains computed by the four algorithms.
 
 \begin{table}[H]
 \centering
-\caption{Calculated White Balance Scaling Multipliers ($s_g = 1.0$)}
+\caption{Calculated white balance scaling multipliers ($s_g = 1.0$)}
 \label{tab:wb_scalars}
 \begin{tabular}{lccc}
 \toprule
@@ -648,7 +648,7 @@ The three channels are dense and consistent with each other, which confirms that
 \section{Color Space Correction}
 
 \subsection{Implementation}
-Raw camera sensor dyes do not correspond to the standard sRGB primaries. To map Camera RGB coordinates to standard sRGB, the device-independent CIE XYZ 1931 space~\cite{cie1931} is used as an intermediate bridge:
+Raw camera sensor dyes do not correspond to the standard sRGB primaries. To map camera RGB coordinates to standard sRGB, the device-independent CIE XYZ 1931 space~\cite{cie1931} is used as an intermediate bridge:
 \begin{equation}
     M_{\text{sRGB}\to\text{Cam}} = M_{\text{XYZ}\to\text{Cam}} \cdot M_{\text{sRGB}\to\text{XYZ}}
 \end{equation}
@@ -722,7 +722,7 @@ Figure~\ref{fig:cc_norm} shows the same demosaiced image converted without and w
         \caption{With normalization before the inversion}
         \label{fig:cc_with_norm}
     \end{subfigure}
-    \caption{Effect of normalizing the rows of $M_{\text{sRGB}\to\text{Cam}}$ before inverting it.}
+    \caption{Effect of normalizing the rows of $M_{\text{sRGB}\to\text{Cam}}$ before inverting it. Images taken after the color space correction step, no brightness or gamma.}
     \label{fig:cc_norm}
 \end{figure}
 
@@ -734,7 +734,7 @@ Figure~\ref{fig:color_correction_comp} displays the image immediately before and
     \begin{subfigure}[b]{0.48\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/color_corr_before.jpg}
-        \caption{Before color correction (linear Camera RGB)}
+        \caption{Before color correction (linear camera RGB)}
         \label{fig:cc_before}
     \end{subfigure}
     \hfill
@@ -744,7 +744,7 @@ Figure~\ref{fig:color_correction_comp} displays the image immediately before and
         \caption{After color correction (linear sRGB)}
         \label{fig:cc_after}
     \end{subfigure}
-    \caption{Visual comparison before and after Color Space Correction, rendered directly at Step 7 in linear space.}
+    \caption{Visual comparison before and after Color Space Correction. Images taken directly before and after the color space correction step, no brightness or gamma.}
     \label{fig:color_correction_comp}
 \end{figure}
 
