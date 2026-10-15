@@ -23,7 +23,7 @@ import numpy as np
 from skimage import color, img_as_ubyte, io
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
-from assign_code import SUPPORTED_PATTERNS, RawCameraPipeline, detect_bayer_pattern
+from assign_code import SUPPORTED_PATTERNS, RawCameraPipeline
 
 BLACK, WHITE = 2048, 15488
 WB_MULTS = [1.858398, 1.0, 1.723633, 1.0]
@@ -112,6 +112,53 @@ def crop(img, region):
     return img[y0:y1, x0:x1]
 
 
+def fig_crop_parity(filters=0x94949494, left=122, top=80, rows=6, cols=7):
+    """Section 4.2.2: the CFA of the sensor around the corner where dcraw's crop starts."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    face = {"R": "#f4a6a6", "G": "#a8dca8", "B": "#a9c3f0"}
+
+    def sensor_color(row, col):
+        return "RGB"[(filters >> ((((row << 1) & 14) + (col & 1)) << 1)) & 3]
+
+    def panel(ax, crop_left, title):
+        r0, c0 = top - 2, crop_left - 2
+        for i in range(rows):
+            for j in range(cols):
+                r, c = r0 + i, c0 + j
+                kept = r >= top and c >= crop_left
+                ax.add_patch(Rectangle((j, i), 1, 1, facecolor=face[sensor_color(r, c)],
+                                       edgecolor="white", alpha=1.0 if kept else 0.3, lw=1.5))
+                ax.text(j + 0.5, i + 0.5, sensor_color(r, c), ha="center", va="center",
+                        fontsize=12, fontweight="bold" if kept else "normal",
+                        color="black" if kept else "0.55")
+        ax.plot([2, cols], [2, 2], color="black", lw=2.5)          # first kept row
+        ax.plot([2, 2], [2, rows], color="black", lw=2.5)          # first kept column
+        ax.add_patch(Rectangle((2, 2), 2, 2, fill=False, edgecolor="red", lw=3))
+        ax.set_xticks([j + 0.5 for j in range(cols)], [str(c0 + j) for j in range(cols)])
+        ax.set_yticks([i + 0.5 for i in range(rows)], [str(r0 + i) for i in range(rows)])
+        ax.tick_params(length=0, labelsize=9)
+        ax.set_xlabel("sensor column", fontsize=10)
+        ax.set_ylabel("sensor row", fontsize=10)
+        ax.set_xlim(0, cols)
+        ax.set_ylim(rows, 0)
+        ax.set_aspect("equal")
+        for s in ax.spines.values():
+            s.set_visible(False)
+        tile = "".join(sensor_color(top + r, crop_left + c) for r in (0, 1) for c in (0, 1))
+        ax.set_title(f"{title}\nfirst tile of the image: {tile}", fontsize=11)
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.6))
+    panel(axes[0], left, f"(a) dcraw crop: left = {left}, top = {top}")
+    panel(axes[1], left + 1, f"(b) hypothetical: left = {left + 1}, top = {top}")
+    fig.tight_layout()
+    fig.savefig(os.path.join(FIG, "bayer_crop_parity.png"), dpi=200)
+    plt.close(fig)
+
+
 def main():
     os.makedirs(FIG, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
@@ -127,7 +174,8 @@ def main():
 
     # ------------------------------------------------------------------ Section 4
     log("\n== Section 4: Bayer pattern from the CR2 bytes ==")
-    detect_bayer_pattern("campus.CR2")
+    RawCameraPipeline("campus.tiff", BLACK, WHITE, WB_MULTS).detect_bayer_pattern_from_cr2("campus.CR2")
+    fig_crop_parity()
     try:
         info = subprocess.run(["./dcraw", "-i", "-v", "campus.CR2"],
                               capture_output=True, text=True, check=True).stdout

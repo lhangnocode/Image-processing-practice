@@ -10,6 +10,7 @@ This file is structured to mirror the sections in the assignment PDF:
   2. Raw Image Extraction           → load_raw_tiff()
   3. Linearization                  → linearize()
   4. The Bayer Pattern              → _build_bayer_masks(), bayer_pattern
+                                       detect_bayer_pattern_from_cr2()
   5. White Balancing                → white_balance(...)
   6. Demosaicing                    → demosaic_bilinear()
   7. Color Space Correction         → color_space_correction(...)
@@ -176,6 +177,103 @@ class RawCameraPipeline:
                 channel_masks[char][row_slice, col_slice] = True
 
         return mask_r, mask_g, mask_b
+
+    def detect_bayer_pattern_from_cr2(self, cr2_path: str):
+        """
+        Section 4.2.2 – read the Bayer pattern from the bytes of the Canon CR2
+        file (no imaging or metadata library) and use it as self.pattern.
+
+          1. CR2 header -> byte order, offsets of IFD0 and of the RAW IFD (IFD#3).
+          2. IFD0, EXIF -> camera make/model; look for a CFAPattern tag.
+          3. RAW IFD    -> lossless-JPEG SOF3 marker: full sensor width x height.
+          4. CFA code   -> a CR2 has no CFA tag: Canon's code 0x94949494 (as in dcraw)
+                           gives the 2x2 tile at sensor pixel (0, 0).
+          5. Crop       -> dcraw cuts (left, top) border pixels before writing the
+                           TIFF; the tile moves by that offset modulo 2.
+        """
+        # 2-bit color index (0 = R, 1 = G, 2 = B) per tile position, used by dcraw
+        # for every Canon EOS camera ("filters = 0x94949494" in dcraw.c).
+        CANON_FILTERS = 0x94949494
+        # Border cut by dcraw for this sensor size: (width, height) -> (left, top)
+        # (dcraw.c, table canon[]).
+        DCRAW_CANON_MARGINS = {(5920, 3950): (122, 80)}
+
+        with open(cr2_path, "rb") as f:
+            data = f.read()
+
+        def hexbytes(offset, size):
+            return " ".join(f"{b:02x}" for b in data[offset:offset + size])
+
+        # 1. Header: "II" = little-endian (Intel), "MM" = big-endian (Motorola).
+        order = {b"II": "little", b"MM": "big"}.get(data[0:2])
+
+        def uint(offset, size):
+            return int.from_bytes(data[offset:offset + size], order)
+
+        if order is None or uint(2, 2) != 42 or data[8:10] != b"CR":
+            raise ValueError(f"{cr2_path} is not a Canon CR2 file")
+        ifd0_offset, raw_ifd_offset = uint(4, 4), uint(12, 4)
+
+        def read_ifd(offset):
+            """Return {tag: position of the 4-byte value field} and the next IFD offset.
+            IFD = count (2 bytes) + 12-byte entries (tag, type, count, value/offset)."""
+            n = uint(offset, 2)
+            entries = {uint(e, 2): e + 8 for e in range(offset + 2, offset + 2 + 12 * n, 12)}
+            return entries, uint(offset + 2 + 12 * n, 4)
+
+        def string_at(offset):
+            return data[offset:data.index(b"\0", offset)].decode("ascii")
+
+        # 2. IFD chain (IFD0 ... IFD3) and the EXIF sub-IFD; a CFA layout would be
+        #    stored in tag 0x828E (TIFF/EP) or 0xA302 (EXIF).
+        ifds, offset = [], ifd0_offset
+        while offset:
+            entries, offset = read_ifd(offset)
+            ifds.append(entries)
+        ifd0 = ifds[0]
+        exif, _ = read_ifd(uint(ifd0[0x8769], 4))
+        make, model = string_at(uint(ifd0[0x010F], 4)), string_at(uint(ifd0[0x0110], 4))
+        if any(tag in d for d in ifds + [exif] for tag in (0x828E, 0xA302)):
+            raise ValueError("the file records its CFA layout in a CFAPattern tag")
+
+        # 3. RAW IFD -> StripOffsets -> lossless JPEG; walk its markers to SOF3.
+        raw_ifd, _ = read_ifd(raw_ifd_offset)
+        pos = uint(raw_ifd[0x0111], 4) + 2          # skip SOI (FF D8)
+        while data[pos:pos + 2] != b"\xff\xc3":
+            pos += 2 + int.from_bytes(data[pos + 2:pos + 4], "big")
+        sof3 = pos                                  # JPEG markers are big-endian
+        bit_depth = data[sof3 + 4]
+        lines = int.from_bytes(data[sof3 + 5:sof3 + 7], "big")
+        samples = int.from_bytes(data[sof3 + 7:sof3 + 9], "big")
+        components = data[sof3 + 9]
+        sensor_w, sensor_h = samples * components, lines
+
+        # 4. Color of sensor pixel (row, col) from the CFA code.
+        def sensor_color(row, col):
+            return "RGB"[(CANON_FILTERS >> ((((row << 1) & 14) + (col & 1)) << 1)) & 3]
+
+        # 5. Pixel (0, 0) of the TIFF is sensor pixel (top, left).
+        if (sensor_w, sensor_h) not in DCRAW_CANON_MARGINS:
+            raise ValueError(f"no dcraw margins known for a {sensor_w}x{sensor_h} sensor")
+        left, top = DCRAW_CANON_MARGINS[(sensor_w, sensor_h)]
+        sensor_tile = "".join(sensor_color(r, c) for r in (0, 1) for c in (0, 1))
+        pattern = "".join(sensor_color(top + r, left + c) for r in (0, 1) for c in (0, 1))
+
+        print("--- Section 4.2.2: Bayer Pattern from the CR2 Bytes ---")
+        print(f"Header: {hexbytes(0, 16)}")
+        print(f"  byte order: {order}, IFD0 at {ifd0_offset:#x}, RAW IFD at {raw_ifd_offset:#x}")
+        print(f"Camera: {make} / {model}")
+        print(f"CFAPattern tag (0x828E / 0xA302): not present -> CFA code {CANON_FILTERS:#010x}")
+        print(f"SOF3 at {sof3:#x}: {hexbytes(sof3, 10)}")
+        print(f"  {bit_depth}-bit, {lines} lines x {samples} samples x {components} components"
+              f" -> sensor {sensor_w} x {sensor_h}")
+        print(f"Sensor tile at (0, 0): {sensor_tile}")
+        print(f"Crop origin (left, top) = ({left}, {top}) -> Bayer pattern: {pattern}")
+
+        if pattern != self.pattern:
+            print(f"Bayer pattern changed from {self.pattern} to {pattern}")
+        self.pattern = pattern
+        return pattern
 
     # ------------------------------------------------------------------
     # Section 5: White Balancing
@@ -537,9 +635,6 @@ if __name__ == "__main__":
     WHITE = 15488
     WB_MULTS = [1.858398, 1.0, 1.723633, 1.0]
 
-    # Supported Bayer patterns: 'RGGB', 'BGGR', 'GRBG', 'GBRG'
-    BAYER_PATTERN = "RGGB"
-
     # Example XYZ→Camera matrix (from dcraw/adobe_coeff, for Canon EOS 5D Mark III)
     # Values: { 6722,-635,-963,-4287,12460,2028,-908,2162,5668 } / 10000
     M_XYZ_CAM = np.array([
@@ -552,11 +647,11 @@ if __name__ == "__main__":
         tiff_path="campus.tiff",
         black_level=BLACK,
         white_level=WHITE,
-        wb_multipliers=WB_MULTS,
-        bayer_pattern=BAYER_PATTERN
+        wb_multipliers=WB_MULTS
     )
 
     # Full pipeline execution
+    pipeline.detect_bayer_pattern_from_cr2("campus.CR2")   # Section 4.2.2: sets the Bayer pattern
     pipeline.load_raw_tiff()
     pipeline.linearize()
     pipeline.white_balance(method="camera")   # Options: "camera", "gray_world", "white_world", "manual"
@@ -565,122 +660,3 @@ if __name__ == "__main__":
     pipeline.brightness_and_gamma(target_mean=0.25)
     pipeline.save_png_jpeg("campus_output", quality=95)
     # pipeline.show()  # Uncomment if running in an interactive graphical environment
-
-
-# ----------------------------------------------------------------------
-# Section 4.2.2: automatic Bayer phase detection from the CR2 bytes
-# (not part of the pipeline; run it with
-#   python -c "from assign_code import detect_bayer_pattern; detect_bayer_pattern('campus.CR2')")
-# ----------------------------------------------------------------------
-def detect_bayer_pattern(cr2_path, verbose=True):
-    """
-    Find the Bayer phase of a Canon CR2 file by reading its bytes directly,
-    the way a RAW decoder does (no imaging library involved):
-
-      1. TIFF/CR2 header  -> byte order, IFD0 offset, raw IFD offset.
-      2. IFDs              -> camera make/model, any CFAPattern tag.
-      3. Raw IFD           -> lossless-JPEG SOF3 header: full sensor size, bit depth.
-      4. MakerNote 0x00E0  -> SensorInfo: the camera's own crop borders.
-      5. Sensor tile shifted by the crop origin (mod 2) -> pattern at pixel (0, 0).
-
-    Returns a dict; "pattern" is the phase of the TIFF produced by "dcraw -D".
-    """
-
-    # Default Bayer code that dcraw uses when the file names no CFA layout
-    # (dcraw.c: "if (filters == UINT_MAX) filters = 0x94949494;"). Each 2-bit
-    # field is a color index: 0 = R, 1 = G, 2 = B.
-    DEFAULT_FILTERS = 0x94949494
-
-    # Margins dcraw cuts from a Canon sensor of a given size (dcraw.c, table
-    # "canon[][11]": {raw_width, raw_height, left_margin, top_margin, ...}).
-    # The TIFF written by "dcraw -D" starts at this corner.
-    DCRAW_CANON_MARGINS = {(5920, 3950): (122, 80)}
-    with open(cr2_path, "rb") as f:
-        data = f.read()
-
-    # 1. Header: "II" = little-endian (Intel), "MM" = big-endian (Motorola).
-    order = {b"II": "little", b"MM": "big"}[data[0:2]]
-
-    def uint(offset, size):
-        return int.from_bytes(data[offset:offset + size], order)
-
-    if uint(2, 2) != 42 or data[8:10] != b"CR":
-        raise ValueError("not a TIFF-based Canon CR2 file")
-    ifd0_offset, raw_ifd_offset = uint(4, 4), uint(12, 4)
-
-    type_size = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1}
-
-    def read_ifd(offset):
-        """Return {tag: (type, count, value_offset)} and the next IFD offset."""
-        entries = {}
-        for i in range(uint(offset, 2)):
-            entry = offset + 2 + 12 * i
-            tag, typ, count = uint(entry, 2), uint(entry + 2, 2), uint(entry + 4, 4)
-            # Values of up to 4 bytes are stored in the entry itself.
-            inline = type_size.get(typ, 1) * count <= 4
-            entries[tag] = (typ, count, entry + 8 if inline else uint(entry + 8, 4))
-        return entries, uint(offset + 2 + 12 * uint(offset, 2), 4)
-
-    def ascii(entries, tag):
-        _, count, at = entries[tag]
-        return data[at:at + count].rstrip(b"\0").decode("ascii")
-
-    # 2. IFD chain (IFD0 = preview + metadata, ..., last = raw data), EXIF, MakerNote.
-    ifds, offset = [], ifd0_offset
-    while offset:
-        entries, offset = read_ifd(offset)
-        ifds.append(entries)
-    ifd0 = ifds[0]
-    exif, _ = read_ifd(uint(ifd0[0x8769][2], 4))
-    makernote, _ = read_ifd(exif[0x927C][2])
-    make, model = ascii(ifd0, 0x010F), ascii(ifd0, 0x0110)
-
-    # A CFA layout would be stored in TIFF/EP tag 0x828E or EXIF tag 0xA302.
-    has_cfa_tag = any(t in d for d in ifds + [exif, makernote] for t in (0x828E, 0xA302))
-    if has_cfa_tag:
-        raise NotImplementedError("file carries an explicit CFAPattern tag")
-
-    # 3. Raw IFD -> lossless JPEG stream; its SOF3 marker gives the sensor size.
-    raw_ifd, _ = read_ifd(raw_ifd_offset)
-    pos = uint(raw_ifd[0x0111][2], 4) + 2     # StripOffsets, then skip SOI (FF D8)
-    while data[pos:pos + 2] != b"\xff\xc3":   # walk markers until SOF3
-        pos += 2 + int.from_bytes(data[pos + 2:pos + 4], "big")
-    sof = pos + 4                             # JPEG headers are always big-endian
-    bit_depth = data[sof]
-    lines = int.from_bytes(data[sof + 1:sof + 3], "big")
-    samples = int.from_bytes(data[sof + 3:sof + 5], "big")
-    components = data[sof + 5]
-    sensor_w, sensor_h = samples * components, lines
-
-    # 4. Canon SensorInfo (MakerNote tag 0x00E0, int16 array): camera crop borders.
-    _, _, at = makernote[0x00E0]
-    info = [uint(at + 2 * k, 2) for k in range(9)]
-    camera_left, camera_top = info[5], info[6]
-
-    # 5. No CFA tag: the sensor tile at sensor pixel (0, 0) is dcraw's default code.
-    #    Color index of (row, col) = filters >> ((((row << 1) & 14) + (col & 1)) << 1) & 3
-    def tile_at(row, col):
-        return "RGB"[(DEFAULT_FILTERS >> ((((row << 1) & 14) + (col & 1)) << 1)) & 3]
-
-    def pattern_from(top, left):
-        return "".join(tile_at(top + r, left + c) for r in (0, 1) for c in (0, 1))
-
-    left, top = DCRAW_CANON_MARGINS[(sensor_w, sensor_h)]
-    result = {
-        "make": make, "model": model, "model_id": uint(makernote[0x0010][2], 4),
-        "byte_order": order, "cfa_tag": has_cfa_tag,
-        "sensor_size": (sensor_w, sensor_h), "bit_depth": bit_depth,
-        "sensor_tile": pattern_from(0, 0),
-        "camera_crop": (camera_left, camera_top), "camera_pattern": pattern_from(camera_top, camera_left),
-        "dcraw_crop": (left, top), "pattern": pattern_from(top, left),
-    }
-    if verbose:
-        print("--- Section 4.2.2: Bayer phase from the CR2 bytes ---")
-        print(f"{make} / {model} (ModelID {result['model_id']:#x}), byte order {order}")
-        print(f"CFAPattern tag present: {has_cfa_tag}")
-        print(f"Sensor: {sensor_w} x {sensor_h}, {bit_depth}-bit (SOF3: {lines} lines x "
-              f"{samples} samples x {components} components)")
-        print(f"Sensor tile at (0,0): {result['sensor_tile']}")
-        print(f"Camera crop origin (left, top) = {result['camera_crop']} -> {result['camera_pattern']}")
-        print(f"dcraw crop origin (left, top)  = {result['dcraw_crop']} -> {result['pattern']}")
-    return result

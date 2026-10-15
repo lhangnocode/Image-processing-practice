@@ -9,13 +9,15 @@ Mean linear intensity: 0.1059
 width=5796 height=3870 min=2029.0 max=16383.0 bits=14.00
 
 == Section 4: Bayer pattern from the CR2 bytes ==
---- Section 4.2.2: Bayer phase from the CR2 bytes ---
-Canon / Canon EOS 5D Mark III (ModelID 0x80000285), byte order little
-CFAPattern tag present: False
-Sensor: 5920 x 3950, 14-bit (SOF3: 3950 lines x 2960 samples x 2 components)
-Sensor tile at (0,0): RGGB
-Camera crop origin (left, top) = (140, 96) -> RGGB
-dcraw crop origin (left, top)  = (122, 80) -> RGGB
+--- Section 4.2.2: Bayer Pattern from the CR2 Bytes ---
+Header: 49 49 2a 00 10 00 00 00 43 52 02 00 80 19 01 00
+  byte order: little, IFD0 at 0x10, RAW IFD at 0x11980
+Camera: Canon / Canon EOS 5D Mark III
+CFAPattern tag (0x828E / 0xA302): not present -> CFA code 0x94949494
+SOF3 at 0x411b1e: ff c3 00 0e 0e 0f 6e 0b 90 02
+  14-bit, 3950 lines x 2960 samples x 2 components -> sensor 5920 x 3950
+Sensor tile at (0, 0): RGGB
+Crop origin (left, top) = (122, 80) -> Bayer pattern: RGGB
 dcraw -i -v campus.CR2:
 
 Filename: campus.CR2

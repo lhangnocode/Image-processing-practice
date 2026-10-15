@@ -11,7 +11,7 @@ Two deliverables live side by side and must agree with each other:
 - `assign_code.py` — the instructor-provided skeleton (`RawCameraPipeline`), with the TODOs filled in.
 - `Assignment_01.tex` + `reference_01.bib` + `figures/` — the report.
 
-Not a git repository. There are no tests and no lint configuration.
+The git repository root is the parent directory; this project lives in `Practice-1/`. There are no tests and no lint configuration.
 
 ## Commands
 
@@ -60,9 +60,9 @@ Things that follow from this and are easy to get wrong:
 
 - **White balance happens on the mosaic, before demosaicing**, by scaling the R and B sites selected with `_build_bayer_masks()`. Green is the fixed baseline (`s_g = 1`).
 - **`white_balance()` and `color_space_correction()` overwrite their input.** Calling either twice compounds the effect. To compare WB methods or Bayer patterns, build a fresh `RawCameraPipeline` per variant (or call `linearize()` again to reset `linear_image`).
-- **The Bayer pattern is a constructor argument** used by both white balance and demosaicing; the string maps row-major onto the 2×2 tile. `RGGB` is the correct phase for this file.
+- **The Bayer pattern is a constructor argument (default `RGGB`), overwritten by `detect_bayer_pattern_from_cr2()`**, used by both white balance and demosaicing; the string maps row-major onto the 2×2 tile. `RGGB` is the correct phase for this file.
 - **`M_srgb_to_cam` is row-normalised before it is inverted** (as dcraw's `cam_xyz_coeff` does), so white-balanced neutrals stay neutral. This goes beyond the formula in the spec; the report's "Row Normalization" subsection states this and shows the result with and without it — keep code and that subsection in agreement.
-- `detect_bayer_pattern()` (Section 4.2.2) parses the CR2 bytes with no imaging/metadata library — the user asked for this explicitly. CR2 has no CFAPattern tag; the sensor tile comes from dcraw's default `filters = 0x94949494` and the crop origin from `DCRAW_CANON_MARGINS` (dcraw's Canon table). It is a self-contained function at the end of `assign_code.py`, separate from the pipeline; `__main__` keeps `BAYER_PATTERN = "RGGB"`.
+- `detect_bayer_pattern_from_cr2(cr2_path)` (Section 4.2.2) is a pipeline method: it parses the CR2 bytes with no imaging/metadata library (header → IFD0/EXIF → no CFAPattern tag → IFD#3 → SOF3 sensor size → Canon code `0x94949494` shifted by dcraw's crop `(122, 80)`) and sets `self.pattern`. `__main__` calls it before `load_raw_tiff()` instead of hard-coding the pattern (the old standalone `detect_bayer_pattern()` and `BAYER_PATTERN` were removed at the user's request).
 - The default `manual_region` `(2400, 2450, 2800, 2850)` is `(y_start, y_end, x_start, x_end)` in full-resolution mosaic coordinates (image is 5796×3870) and points at the shaded part of the white marble plaque, just below the English inscription.
 - Demosaicing uses four zero-centre averaging kernels (cross, diagonal, horizontal, vertical) via `scipy.ndimage.convolve` on mask-zeroed channels, each result used only at the site type it applies to. `mode="mirror"` matters: it preserves the Bayer phase across the border, `reflect` would not.
 

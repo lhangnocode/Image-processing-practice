@@ -239,73 +239,146 @@ Each of the four pattern strings is passed to the pipeline, which is run only as
     \item \textbf{\texttt{GRBG} and \texttt{GBRG}:} the pixels treated as ``green'' are actually the sensor's red and blue pixels, while the true green samples are sent to the red and blue channels and amplified by the white balance gains. The whole image turns magenta, including the plants, which is impossible for this scene.
 \end{itemize}
 
-\subsubsection{Strategy 2: Automatic detection from the bytes of the RAW file}
-A RAW decoder has to know the Bayer phase before it can demosaic, and it finds it in the RAW file itself. I re-implemented this process as a separate function, \texttt{detect\_bayer\_pattern()}, placed at the end of \texttt{assign\_code.py}. It reads the bytes of \texttt{campus.CR2} directly with plain Python, without any imaging or metadata library. A CR2 file is built on the TIFF format: a short header followed by \emph{Image File Directories} (IFDs), each of which is a list of 12-byte entries (tag number, data type, count, and the value or the offset where the value is stored). The detection takes five steps.
+\subsubsection{Strategy 2: Reading the pattern from the bytes of the RAW file}
+\label{sec:cr2_bytes}
+A RAW decoder has to know the Bayer phase before it can demosaic, and it obtains it from the RAW file. I implemented this process as a pipeline method, \texttt{detect\_bayer\_pattern\_from\_cr2()}, which reads \texttt{campus.CR2} byte by byte in plain Python, without any imaging or metadata library, and stores the pattern it finds in the pipeline before demosaicing.
 
-\begin{enumerate}
-    \item \textbf{Header.} The first 16 bytes of the file are
+\paragraph{Structure of a CR2 file.} CR2 (Canon RAW version 2) is built on the TIFF format~\cite{lclevy_cr2, libopenraw_cr2}. Figure~\ref{fig:cr2_poster} shows its layout: a TIFF header and a CR2 header, then a chain of four \emph{Image File Directories} (IFD\#0 to IFD\#3) with the EXIF and Canon MakerNote sub-IFDs attached to IFD\#0, and finally the image data. IFD\#0 to IFD\#2 describe preview images, while IFD\#3 describes the RAW sensor data. Every IFD has the same structure:
+\begin{itemize}
+    \item 2 bytes: the number of entries $n$;
+    \item $n$ entries of 12 bytes each: tag (2 bytes), data type (2 bytes), count (4 bytes), and the value itself or, if it does not fit in 4 bytes, the offset where it is stored (4 bytes);
+    \item 4 bytes: the offset of the next IFD ($0$ for the last one).
+\end{itemize}
+All offsets are counted in bytes from the beginning of the file.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/cr2_format_poster.png}
+    \caption{Structure of a CR2 file (left) and an annotated analysis of an example file (right). Poster ``Canon Raw v2 Format'' v1.1 by Laurent Cl\'{e}vy~\cite{lclevy_poster}, licensed under CC BY-NC-SA 4.0.}
+    \label{fig:cr2_poster}
+\end{figure}
+
+The bytes quoted below are those of \texttt{campus.CR2}, displayed with \texttt{hexdump -C -s <offset> -n <length> campus.CR2}. Only the parts of the file that are needed to find the Bayer pattern are read.
+
+\paragraph{Step 1: TIFF and CR2 headers.} The first 16 bytes of the file are
 \begin{lstlisting}[language={}, numbers=none]
-49 49 2A 00 10 00 00 00 43 52 02 00 80 19 01 00
+00000000  49 49 2a 00 10 00 00 00  43 52 02 00 80 19 01 00  |II*.....CR......|
 \end{lstlisting}
-    \texttt{49 49} (``II'') means all numbers are stored little-endian, \texttt{2A 00} is the TIFF identifier $42$, \texttt{10 00 00 00} is the offset of the first IFD ($16$), \texttt{43 52} is the Canon signature ``CR'' with version $2.0$, and \texttt{80 19 01 00} is the offset of the IFD that holds the raw sensor data ($72064$).
+\begin{itemize}
+    \item Bytes 0--1, \texttt{49 49} (``II''): the file is \emph{little-endian} (Intel order), so every multi-byte number is read from its last byte to its first.
+    \item Bytes 2--3, \texttt{2a 00} $\rightarrow$ \texttt{0x002A} $= 42$: the TIFF identifier.
+    \item Bytes 4--7, \texttt{10 00 00 00} $\rightarrow$ \texttt{0x10}: offset of IFD\#0.
+    \item Bytes 8--11, \texttt{43 52 02 00}: the CR2 marker ``CR'' and version $2.0$.
+    \item Bytes 12--15, \texttt{80 19 01 00} $\rightarrow$ \texttt{0x00011980} $= 72064$: offset of the RAW IFD (IFD\#3)~\cite{libopenraw_cr2}. Following the chain IFD\#0 $\rightarrow$ IFD\#1 $\rightarrow$ IFD\#2 leads to the same place: the last 4 bytes of IFD\#2 are also \texttt{80 19 01 00}.
+\end{itemize}
 
-    \item \textbf{Metadata and CFA tag.} IFD0 gives the make (``Canon'') and the model (``Canon EOS 5D Mark III''); its EXIF entry (tag \texttt{0x8769}) leads to the EXIF IFD, whose MakerNote entry (tag \texttt{0x927C}) leads to Canon's private IFD with the model code \texttt{0x80000285} (tag \texttt{0x0010}). A file can state its CFA layout in tag \texttt{0x828E} (TIFF/EP) or \texttt{0xA302} (EXIF), but none of the IFDs of \texttt{campus.CR2} contains either tag, so the layout is not recorded in the file. Decoders therefore use the layout that Canon's Bayer sensors have at sensor pixel $(0,0)$. In \texttt{dcraw} this is the default code \texttt{filters = 0x94949494}, in which every 2-bit field is the color of one tile position ($0 = \text{R}$, $1 = \text{G}$, $2 = \text{B}$). The position of the field for pixel $(r, c)$ is computed with bit operations,
-    \begin{equation}
-        \text{color}(r, c) = \big(\texttt{filters} \gg \big((((r \ll 1) \,\&\, 14) + (c \,\&\, 1)) \ll 1\big)\big) \,\&\, 3 ,
-    \end{equation}
-    so the lowest byte $\texttt{0x94} = \texttt{10\,01\,01\,00}_2$, read from the right, gives $(0,0) = 00 = \text{R}$, $(0,1) = 01 = \text{G}$, $(1,0) = 01 = \text{G}$ and $(1,1) = 10 = \text{B}$: the sensor tile is \texttt{RG/GB}.
+\paragraph{Step 2: IFD\#0, camera model.} IFD\#0 starts at \texttt{0x10} with the count \texttt{12 00} $= 18$ entries. Three of them are needed:
+\begin{lstlisting}[language={}, numbers=none]
+offset    tag   type  count        value/offset
+0x000042  0f 01 02 00 06 00 00 00  f4 00 00 00   Make,  ASCII, 6 bytes at 0xf4
+0x00004e  10 01 02 00 16 00 00 00  fa 00 00 00   Model, ASCII, 22 bytes at 0xfa
+0x0000d2  69 87 04 00 01 00 00 00  be 01 00 00   EXIF sub-IFD at 0x1be
+\end{lstlisting}
+The strings at \texttt{0xf4} and \texttt{0xfa} are ``Canon'' and ``Canon EOS 5D Mark III'', so the file comes from a Canon EOS camera.
 
-    \item \textbf{Sensor size.} The raw IFD points to the raw data, which is stored as a lossless JPEG stream. Its SOF3 marker (\texttt{FF C3}) gives a precision of $14$ bits, $3950$ lines and $2960$ samples $\times$ $2$ components per line, i.e.\ a full sensor of $5920 \times 3950$ pixels. This also confirms the $14$-bit depth found in Section 2.2.
+\paragraph{Step 3: looking for a CFA tag.} A file can record its CFA layout in tag \texttt{0x828E} (CFAPattern of TIFF/EP) or tag \texttt{0xA302} (CFAPattern of EXIF). Scanning every entry of IFD\#0 to IFD\#3 and of the EXIF sub-IFD (at \texttt{0x1be}, $38$ entries) finds neither tag: \textbf{a CR2 file does not record its CFA layout}. Decoders therefore rely on the known layout of Canon sensors: all Canon EOS cameras have an \texttt{RGGB} color filter array starting at sensor pixel $(0, 0)$, which \texttt{dcraw} encodes as \texttt{filters = 0x94949494}~\cite{lclevy_cr2, dcraw}. What the file does provide is the information needed to apply this code: the camera (Step 2), the full sensor size (Step 4), and from it the position of the image on the sensor (Step 6).
 
-    \item \textbf{Crop origin.} The image area does not start at sensor pixel $(0,0)$; the masked border pixels around it are cut away. For a $5920 \times 3950$ Canon sensor, \texttt{dcraw} cuts $122$ columns on the left and $80$ rows at the top, which gives exactly the $5796 \times 3870$ image written to \texttt{campus.tiff}. The camera's own crop is stored in the MakerNote (SensorInfo, tag \texttt{0x00E0}): left border $140$, top border $96$, which gives the $5760 \times 3840$ size of the camera's JPEG.
+\paragraph{Step 4: RAW IFD and sensor size.} IFD\#3 at \texttt{0x11980} has $7$ entries; among them, Compression (\texttt{0x0103}) $= 6$ (JPEG), StripOffsets (\texttt{0x0111}) $=$ \texttt{0x411ad8}, where the RAW data starts, and the Canon slice tag \texttt{0xC640} $= (1, 2960, 2960)$. The RAW data is a lossless JPEG stream (ITU-T T.81~\cite{itu_t81}) whose markers are always \emph{big-endian}:
+\begin{lstlisting}[language={}, numbers=none]
+00411ad8  ff d8 ff c4 00 42 ...           SOI, then DHT (Huffman tables, 0x42 bytes)
+00411b1e  ff c3 00 0e 0e 0f 6e 0b 90 02   SOF3 (start of frame, lossless)
+\end{lstlisting}
+The SOF3 header reads: length \texttt{00 0e} $= 14$, precision \texttt{0e} $= 14$ bits, \texttt{0f 6e} $= 3950$ lines, \texttt{0b 90} $= 2960$ samples per line, and \texttt{02} $= 2$ components. Each line of the JPEG stream holds two sensor columns per sample~\cite{libopenraw_cr2}, so the full sensor is $2960 \times 2 = 5920$ pixels wide and $3950$ pixels high, with $14$-bit values as found in Section 2. The slice tag gives the same width: $1 \times 2960 + 2960 = 5920$~\cite{swetake_cr2}.
 
-    \item \textbf{Phase at the image origin.} Shifting the origin by $(\text{top}, \text{left})$ shifts the tile by the same amount modulo 2:
-    \begin{equation}
-        \text{color}_{\text{image}}(r, c) = \text{color}_{\text{sensor}}\big((r + \text{top}) \bmod 2,\; (c + \text{left}) \bmod 2\big)
-    \end{equation}
-    An odd column offset would turn \texttt{RGGB} into \texttt{GRBG}, and an odd row offset into \texttt{GBRG}. Here both offsets are even ($80$ and $122$ for \texttt{campus.tiff}, $96$ and $140$ for the camera's crop), so the tile is unchanged and the pattern is \textbf{\texttt{RGGB}}.
-\end{enumerate}
+\paragraph{Step 5: decoding the CFA code.} In \texttt{filters}, every 2-bit field is the color of one position of the tile ($0 = \text{R}$, $1 = \text{G}$, $2 = \text{B}$). For sensor pixel $(r, c)$, \texttt{dcraw} selects the field with bit operations:
+\begin{equation}
+    \text{color}(r, c) = \big(\texttt{filters} \gg \big((((r \ll 1) \,\&\, 14) + (c \,\&\, 1)) \ll 1\big)\big) \,\&\, 3
+\end{equation}
+For the $2 \times 2$ tile at the sensor origin only the lowest byte, $\texttt{0x94} = \texttt{10\,01\,01\,00}_2$, is used (Table~\ref{tab:filters}): the tile at sensor pixel $(0, 0)$ is \texttt{RGGB}.
 
-The core of the implementation (the full, self-contained function is at the end of \texttt{assign\_code.py}):
+\begin{table}[H]
+\centering
+\caption{Decoding the lowest byte of \texttt{filters = 0x94949494}}
+\label{tab:filters}
+\begin{tabular}{cccc}
+\toprule
+\textbf{Sensor pixel $(r, c)$} & \textbf{Shift (bits)} & \textbf{2-bit field} & \textbf{Color} \\
+\midrule
+$(0, 0)$ & $0$ & \texttt{00} & R \\
+$(0, 1)$ & $2$ & \texttt{01} & G \\
+$(1, 0)$ & $4$ & \texttt{01} & G \\
+$(1, 1)$ & $6$ & \texttt{10} & B \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Step 6: from the sensor to \texttt{campus.tiff}.} \texttt{campus.tiff} ($5796 \times 3870$) is smaller than the sensor ($5920 \times 3950$) because \texttt{dcraw} cuts away the masked border pixels. Pixel $(0, 0)$ of the TIFF is therefore sensor pixel $(\text{top}, \text{left})$, and the tile is shifted by this offset modulo 2:
+\begin{equation}
+    \text{color}_{\text{image}}(r, c) = \text{color}_{\text{sensor}}(r + \text{top},\; c + \text{left})
+\end{equation}
+The difference in size gives only the total border, $124$ columns and $80$ rows, not how it is split between the two sides, yet the split decides the pattern: a left border of $122$ columns keeps \texttt{RGGB}, while $123$ would give \texttt{GRBG}. The split is taken from the table of Canon sensors in \texttt{dcraw}~\cite{dcraw}, which for a $5920 \times 3950$ sensor cuts $122$ columns on the left and $80$ rows at the top ($5920 - 122 - 2 = 5796$ and $3950 - 80 = 3870$). Both offsets are even, so the tile is unchanged (Figure~\ref{fig:crop_parity}) and the Bayer pattern of \texttt{campus.tiff} is \textbf{\texttt{RGGB}}.
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/bayer_crop_parity.png}
+    \caption{The color filter array of the sensor (from \texttt{filters = 0x94949494}) around the corner where the image starts. Faded pixels are cut away; the red square is the first $2 \times 2$ tile of the image. (a) The crop used by \texttt{dcraw} for \texttt{campus.tiff}. (b) A crop starting one column further right would change the pattern to \texttt{GRBG}.}
+    \label{fig:crop_parity}
+\end{figure}
+
+\paragraph{Implementation.} The core of \texttt{detect\_bayer\_pattern\_from\_cr2()} (prints and error checks removed):
 \begin{lstlisting}
-order = {b"II": "little", b"MM": "big"}[data[0:2]]          # 1. header
+CANON_FILTERS = 0x94949494
+DCRAW_CANON_MARGINS = {(5920, 3950): (122, 80)}   # (left, top)
+
+order = {b"II": "little", b"MM": "big"}.get(data[0:2])     # Step 1
 def uint(offset, size):
     return int.from_bytes(data[offset:offset + size], order)
 ifd0_offset, raw_ifd_offset = uint(4, 4), uint(12, 4)
 
-def read_ifd(offset):                                       # 12-byte entries
-    entries = {}
-    for i in range(uint(offset, 2)):
-        entry = offset + 2 + 12 * i
-        tag, typ, count = uint(entry, 2), uint(entry + 2, 2), uint(entry + 4, 4)
-        inline = type_size.get(typ, 1) * count <= 4
-        entries[tag] = (typ, count, entry + 8 if inline else uint(entry + 8, 4))
-    return entries, uint(offset + 2 + 12 * uint(offset, 2), 4)
+def read_ifd(offset):                       # count + 12-byte entries
+    n = uint(offset, 2)
+    entries = {uint(e, 2): e + 8
+               for e in range(offset + 2, offset + 2 + 12 * n, 12)}
+    return entries, uint(offset + 2 + 12 * n, 4)
 
-has_cfa_tag = any(t in d for d in ifds + [exif, makernote]  # 2. CFA tag?
-                  for t in (0x828E, 0xA302))
+ifds, offset = [], ifd0_offset                             # Steps 2-3
+while offset:
+    entries, offset = read_ifd(offset)
+    ifds.append(entries)
+exif, _ = read_ifd(uint(ifds[0][0x8769], 4))
+if any(tag in d for d in ifds + [exif] for tag in (0x828E, 0xA302)):
+    raise ValueError("the file records its CFA layout")
 
-pos = uint(raw_ifd[0x0111][2], 4) + 2                        # 3. SOF3 header
-while data[pos:pos + 2] != b"\xff\xc3":
+raw_ifd, _ = read_ifd(raw_ifd_offset)                      # Step 4
+pos = uint(raw_ifd[0x0111], 4) + 2          # skip SOI
+while data[pos:pos + 2] != b"\xff\xc3":     # walk the JPEG markers
     pos += 2 + int.from_bytes(data[pos + 2:pos + 4], "big")
-sensor_w = int.from_bytes(data[pos + 7:pos + 9], "big") * data[pos + 9]
-sensor_h = int.from_bytes(data[pos + 5:pos + 7], "big")
+lines = int.from_bytes(data[pos + 5:pos + 7], "big")
+samples = int.from_bytes(data[pos + 7:pos + 9], "big")
+sensor_w, sensor_h = samples * data[pos + 9], lines
 
-def tile_at(row, col):                                      # 2./5. filters code
-    return "RGB"[(DEFAULT_FILTERS >> ((((row << 1) & 14) + (col & 1)) << 1)) & 3]
-left, top = DCRAW_CANON_MARGINS[(sensor_w, sensor_h)]       # 4. crop origin
-pattern = "".join(tile_at(top + r, left + c) for r in (0, 1) for c in (0, 1))
+def sensor_color(row, col):                                # Step 5
+    shift = (((row << 1) & 14) + (col & 1)) << 1
+    return "RGB"[(CANON_FILTERS >> shift) & 3]
+
+left, top = DCRAW_CANON_MARGINS[(sensor_w, sensor_h)]     # Step 6
+pattern = "".join(sensor_color(top + r, left + c)
+                  for r in (0, 1) for c in (0, 1))
+self.pattern = pattern
 \end{lstlisting}
 Running it on \texttt{campus.CR2} prints:
 \begin{lstlisting}[language={}, numbers=none]
-Canon / Canon EOS 5D Mark III (ModelID 0x80000285), byte order little
-CFAPattern tag present: False
-Sensor: 5920 x 3950, 14-bit (SOF3: 3950 lines x 2960 samples x 2 components)
-Sensor tile at (0,0): RGGB
-Camera crop origin (left, top) = (140, 96) -> RGGB
-dcraw crop origin (left, top)  = (122, 80) -> RGGB
+--- Section 4.2.2: Bayer Pattern from the CR2 Bytes ---
+Header: 49 49 2a 00 10 00 00 00 43 52 02 00 80 19 01 00
+  byte order: little, IFD0 at 0x10, RAW IFD at 0x11980
+Camera: Canon / Canon EOS 5D Mark III
+CFAPattern tag (0x828E / 0xA302): not present -> CFA code 0x94949494
+SOF3 at 0x411b1e: ff c3 00 0e 0e 0f 6e 0b 90 02
+  14-bit, 3950 lines x 2960 samples x 2 components -> sensor 5920 x 3950
+Sensor tile at (0, 0): RGGB
+Crop origin (left, top) = (122, 80) -> Bayer pattern: RGGB
 \end{lstlisting}
-The function is independent of the pipeline, whose main block keeps \texttt{BAYER\_PATTERN = "RGGB"}; the function confirms this value. The result agrees with Strategy 1 and with \texttt{dcraw} itself, whose identification mode (\texttt{./dcraw -i -v campus.CR2}) reports \texttt{Filter pattern: RG/GB}.
+The main block of \texttt{assign\_code.py} no longer hard-codes the Bayer pattern: it calls this method before \texttt{load\_raw\_tiff()}, and white balancing and demosaicing use the pattern read from the file. The result agrees with Strategy 1 and with \texttt{dcraw} itself, whose identification mode (\texttt{./dcraw -i -v campus.CR2}) reports \texttt{Filter pattern: RG/GB}.
 
 \section{White Balancing}
 
@@ -575,7 +648,7 @@ The three channels are dense and consistent with each other, which confirms that
 \section{Color Space Correction}
 
 \subsection{Implementation}
-Raw camera sensor dyes do not correspond to the standard sRGB primaries. To map Camera RGB coordinates to standard sRGB, the device-independent CIE XYZ 1931 space is used as an intermediate bridge:
+Raw camera sensor dyes do not correspond to the standard sRGB primaries. To map Camera RGB coordinates to standard sRGB, the device-independent CIE XYZ 1931 space~\cite{cie1931} is used as an intermediate bridge:
 \begin{equation}
     M_{\text{sRGB}\to\text{Cam}} = M_{\text{XYZ}\to\text{Cam}} \cdot M_{\text{sRGB}\to\text{XYZ}}
 \end{equation}
@@ -841,7 +914,7 @@ Compression artifacts cannot be seen in a full-frame reproduction, so Figure~\re
 In accordance with the assignment guidelines, I used an AI assistant (Google Gemini) as a supporting tool in the following ways:
 \begin{itemize}
     \item \textbf{Understanding the theory:} clarifying concepts behind the pipeline, such as why the Bayer pattern has twice as many green pixels, how the sRGB gamma curve is defined, and how the color space correction matrix is derived.
-    \item \textbf{Implementation support:} suggestions and debugging help for the more involved parts of the code, in particular the bilinear interpolation kernels in \texttt{demosaic\_bilinear()}, the row normalization of the color correction matrix, the parsing of the CR2 file in \texttt{detect\_bayer\_pattern()}, and the script that produces the figures.
+    \item \textbf{Implementation support:} suggestions and debugging help for the more involved parts of the code, in particular the bilinear interpolation kernels in \texttt{demosaic\_bilinear()}, the row normalization of the color correction matrix, the parsing of the CR2 file in \texttt{detect\_bayer\_pattern\_from\_cr2()}, and the script that produces the figures.
     \item \textbf{Report formatting:} help with the \LaTeX{} layout of tables, figures, code listings and equations.
 \end{itemize}
 All AI suggestions were checked against the lecture material, the assignment specification and the cited references, and every result in this report was verified by running the code.
