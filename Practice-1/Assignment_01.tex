@@ -71,7 +71,7 @@
     \textbf{Student Name: } Dang Dinh Khang \\
     \textbf{Student ID: } 23020675
 }
-\date{\today}
+\date{October 15, 2026}
 
 \begin{document}
 
@@ -312,11 +312,17 @@ $(1, 1)$ & $6$ & \texttt{10} & B \\
 \end{tabular}
 \end{table}
 
-\paragraph{Step 6: from the sensor to \texttt{campus.tiff}.} \texttt{campus.tiff} ($5796 \times 3870$) is smaller than the sensor ($5920 \times 3950$) because \texttt{dcraw} cuts away the masked border pixels. Pixel $(0, 0)$ of the TIFF is therefore sensor pixel $(\text{top}, \text{left})$, and the tile is shifted by this offset modulo 2:
+\paragraph{Step 6: crop origin.} The image area does not start at sensor pixel $(0, 0)$; the masked border pixels around it are cut away. \texttt{campus.tiff} ($5796 \times 3870$) is smaller than the sensor ($5920 \times 3950$), but the difference in size gives only the total border, $124$ columns and $80$ rows, not how it is split between the two sides. The split is taken from the table of Canon sensors in \texttt{dcraw}~\cite{dcraw}: for a $5920 \times 3950$ Canon sensor, \texttt{dcraw} cuts $122$ columns on the left and $80$ rows at the top, which gives exactly the $5796 \times 3870$ image written to \texttt{campus.tiff} ($5920 - 122 - 2 = 5796$ and $3950 - 80 = 3870$). The camera's own crop is stored in the MakerNote (EXIF tag \texttt{0x927C}, a Canon IFD at \texttt{0x3e4} with $42$ entries), in SensorInfo, tag \texttt{0x00E0}~\cite{lclevy_cr2}: an array of $17$ 16-bit values at \texttt{0x155c},
+\begin{lstlisting}[language={}, numbers=none]
+0000155c  22 00 20 17 6e 0f 01 00 01 00 8c 00 60 00 0b 17 5f 0f ...
+\end{lstlisting}
+that is, sensor width \texttt{0x1720} $= 5920$, height \texttt{0x0f6e} $= 3950$, left border \texttt{0x8c} $= 140$, top border \texttt{0x60} $= 96$, right border \texttt{0x170b} $= 5899$ and bottom border \texttt{0x0f5f} $= 3935$, which gives the $5760 \times 3840$ size of the camera's JPEG ($5899 - 140 + 1$ and $3935 - 96 + 1$). \texttt{dcraw} does not read this tag, so \texttt{campus.tiff} starts at $(\text{left}, \text{top}) = (122, 80)$.
+
+\paragraph{Step 7: phase at the image origin.} Pixel $(0, 0)$ of the image is sensor pixel $(\text{top}, \text{left})$. Shifting the origin by $(\text{top}, \text{left})$ shifts the tile by the same amount modulo 2:
 \begin{equation}
-    \text{color}_{\text{image}}(r, c) = \text{color}_{\text{sensor}}(r + \text{top},\; c + \text{left})
+    \text{color}_{\text{image}}(r, c) = \text{color}_{\text{sensor}}\big((r + \text{top}) \bmod 2,\; (c + \text{left}) \bmod 2\big)
 \end{equation}
-The difference in size gives only the total border, $124$ columns and $80$ rows, not how it is split between the two sides, yet the split decides the pattern: a left border of $122$ columns keeps \texttt{RGGB}, while $123$ would give \texttt{GRBG}. The split is taken from the table of Canon sensors in \texttt{dcraw}~\cite{dcraw}, which for a $5920 \times 3950$ sensor cuts $122$ columns on the left and $80$ rows at the top ($5920 - 122 - 2 = 5796$ and $3950 - 80 = 3870$). Both offsets are even, so the tile is unchanged (Figure~\ref{fig:crop_parity}) and the Bayer pattern of \texttt{campus.tiff} is \textbf{\texttt{RGGB}}.
+An odd column offset would turn \texttt{RGGB} into \texttt{GRBG}, and an odd row offset into \texttt{GBRG} (Figure~\ref{fig:crop_parity}). Here both offsets are even ($80$ and $122$ for \texttt{campus.tiff}, $96$ and $140$ for the camera's crop), so the tile is unchanged and the Bayer pattern of \texttt{campus.tiff} is \textbf{\texttt{RGGB}}.
 
 \begin{figure}[H]
     \centering
@@ -362,8 +368,14 @@ def sensor_color(row, col):                                # Step 5
     return "RGB"[(CANON_FILTERS >> shift) & 3]
 
 left, top = DCRAW_CANON_MARGINS[(sensor_w, sensor_h)]     # Step 6
-pattern = "".join(sensor_color(top + r, left + c)
-                  for r in (0, 1) for c in (0, 1))
+makernote, _ = read_ifd(uint(exif[0x927C], 4))
+sensor_info = uint(makernote[0x00E0], 4)    # SensorInfo
+cam_left, cam_top = uint(sensor_info + 10, 2), uint(sensor_info + 12, 2)
+
+def image_pattern(top, left):                              # Step 7
+    return "".join(sensor_color(top + r, left + c)
+                   for r in (0, 1) for c in (0, 1))
+pattern = image_pattern(top, left)
 self.pattern = pattern
 \end{lstlisting}
 Running it on \texttt{campus.CR2} prints:
@@ -376,6 +388,7 @@ CFAPattern tag (0x828E / 0xA302): not present -> CFA code 0x94949494
 SOF3 at 0x411b1e: ff c3 00 0e 0e 0f 6e 0b 90 02
   14-bit, 3950 lines x 2960 samples x 2 components -> sensor 5920 x 3950
 Sensor tile at (0, 0): RGGB
+MakerNote SensorInfo (0x00E0): left 140, top 96 -> camera crop 5760 x 3840, pattern RGGB
 Crop origin (left, top) = (122, 80) -> Bayer pattern: RGGB
 \end{lstlisting}
 The main block of \texttt{assign\_code.py} no longer hard-codes the Bayer pattern: it calls this method before \texttt{load\_raw\_tiff()}, and white balancing and demosaicing use the pattern read from the file. The result agrees with Strategy 1 and with \texttt{dcraw} itself, whose identification mode (\texttt{./dcraw -i -v campus.CR2}) reports \texttt{Filter pattern: RG/GB}.
@@ -603,38 +616,38 @@ A full-frame view is reduced too much to show individual pixels, so Figure~\ref{
 
 \begin{figure}[H]
     \centering
-    \begin{subfigure}[b]{0.25\textwidth}
+    \begin{subfigure}[b]{0.22\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/crop_sparse_red.png}
         \caption{Red, before}
     \end{subfigure}
     \hspace{0.04\textwidth}
-    \begin{subfigure}[b]{0.25\textwidth}
+    \begin{subfigure}[b]{0.22\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/crop_sparse_green.png}
         \caption{Green, before}
     \end{subfigure}
     \hspace{0.04\textwidth}
-    \begin{subfigure}[b]{0.25\textwidth}
+    \begin{subfigure}[b]{0.22\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/crop_sparse_blue.png}
         \caption{Blue, before}
     \end{subfigure}
 
-    \vspace{0.3cm}
-    \begin{subfigure}[b]{0.25\textwidth}
+    \vspace{0.2cm}
+    \begin{subfigure}[b]{0.22\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/crop_dense_red.png}
         \caption{Red, after}
     \end{subfigure}
     \hspace{0.04\textwidth}
-    \begin{subfigure}[b]{0.25\textwidth}
+    \begin{subfigure}[b]{0.22\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/crop_dense_green.png}
         \caption{Green, after}
     \end{subfigure}
     \hspace{0.04\textwidth}
-    \begin{subfigure}[b]{0.25\textwidth}
+    \begin{subfigure}[b]{0.22\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/crop_dense_blue.png}
         \caption{Blue, after}

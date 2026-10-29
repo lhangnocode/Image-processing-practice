@@ -189,7 +189,9 @@ class RawCameraPipeline:
           4. CFA code   -> a CR2 has no CFA tag: Canon's code 0x94949494 (as in dcraw)
                            gives the 2x2 tile at sensor pixel (0, 0).
           5. Crop       -> dcraw cuts (left, top) border pixels before writing the
-                           TIFF; the tile moves by that offset modulo 2.
+                           TIFF; the camera's own crop is in the MakerNote
+                           (SensorInfo, tag 0x00E0).
+          6. Phase      -> the tile moves by the crop offset modulo 2.
         """
         # 2-bit color index (0 = R, 1 = G, 2 = B) per tile position, used by dcraw
         # for Canon EOS cameras such as the 5D Mark III, the value it assigns when the
@@ -254,12 +256,24 @@ class RawCameraPipeline:
         def sensor_color(row, col):
             return "RGB"[(CANON_FILTERS >> ((((row << 1) & 14) + (col & 1)) << 1)) & 3]
 
-        # 5. Pixel (0, 0) of the TIFF is sensor pixel (top, left).
+        # 5. Crop origin. Pixel (0, 0) of the TIFF is sensor pixel (top, left).
         if (sensor_w, sensor_h) not in DCRAW_CANON_MARGINS:
             raise ValueError(f"no dcraw margins known for a {sensor_w}x{sensor_h} sensor")
         left, top = DCRAW_CANON_MARGINS[(sensor_w, sensor_h)]
-        sensor_tile = "".join(sensor_color(r, c) for r in (0, 1) for c in (0, 1))
-        pattern = "".join(sensor_color(top + r, left + c) for r in (0, 1) for c in (0, 1))
+        #    The camera's own crop: EXIF tag 0x927C (MakerNote) holds a Canon IFD
+        #    whose tag 0x00E0 (SensorInfo) is an array of 16-bit values:
+        #    [1] sensor width, [2] height, [5] left, [6] top, [7] right, [8] bottom border.
+        makernote, _ = read_ifd(uint(exif[0x927C], 4))
+        sensor_info = uint(makernote[0x00E0], 4)
+        cam_left, cam_top, cam_right, cam_bottom = (uint(sensor_info + 2 * i, 2) for i in (5, 6, 7, 8))
+        cam_w, cam_h = cam_right - cam_left + 1, cam_bottom - cam_top + 1
+
+        # 6. Phase at the image origin: the tile moves by (top, left) modulo 2.
+        def image_pattern(top, left):
+            return "".join(sensor_color(top + r, left + c) for r in (0, 1) for c in (0, 1))
+
+        sensor_tile = image_pattern(0, 0)
+        pattern = image_pattern(top, left)
 
         print("--- Section 4.2.2: Bayer Pattern from the CR2 Bytes ---")
         print(f"Header: {hexbytes(0, 16)}")
@@ -270,6 +284,8 @@ class RawCameraPipeline:
         print(f"  {bit_depth}-bit, {lines} lines x {samples} samples x {components} components"
               f" -> sensor {sensor_w} x {sensor_h}")
         print(f"Sensor tile at (0, 0): {sensor_tile}")
+        print(f"MakerNote SensorInfo (0x00E0): left {cam_left}, top {cam_top}"
+              f" -> camera crop {cam_w} x {cam_h}, pattern {image_pattern(cam_top, cam_left)}")
         print(f"Crop origin (left, top) = ({left}, {top}) -> Bayer pattern: {pattern}")
 
         if pattern != self.pattern:
